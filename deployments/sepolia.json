@@ -1,0 +1,15 @@
+{
+  "network": "sepolia",
+  "deployedAt": "2026-03-22",
+  "deployer": "0x7574fAd74684E8057e4c6CD27dCFbCeBD890e4d3",
+  "contracts": {
+    "IdentityRegistry": "0xfC543a9eDE201C26444Aa2d07B619f3ED2d38f0f",
+    "ReputationRegistry": "0x7d9e05c105fF844b983E8E46bfbA5897eD10C4e1",
+    "AgentSmartAccount": "0xE6106b4c0899c0fE015f5d780fF5dd97F7ffE529"
+  },
+  "etherscan": {
+    "IdentityRegistry": "https://sepolia.etherscan.io/address/0xfC543a9eDE201C26444Aa2d07B619f3ED2d38f0f",
+    "ReputationRegistry": "https://sepolia.etherscan.io/address/0x7d9e05c105fF844b983E8E46bfbA5897eD10C4e1",
+    "AgentSmartAccount": "https://sepolia.etherscan.io/address/0xE6106b4c0899c0fE015f5d780fF5dd97F7ffE529"
+  }
+}
