@@ -1,0 +1,7 @@
+.env
+node_modules/
+artifacts/
+cache/
+typechain-types/
+dist/
+.claude/
