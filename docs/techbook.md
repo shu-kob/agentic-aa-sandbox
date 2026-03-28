@@ -924,7 +924,7 @@ Geminiが「次に何をすべきか」を推論し、ブロックチェーン�
 
 ### 参考論文との対応
 
-Alqithami (2026) の論文 *"Standardized Frameworks for Deploying Intelligent Agents on Decentralized Networks"* は、AIエージェントとブロックチェーンの統合に4つのレイヤーを提唱しています。
+Alqithami (2026) の論文 *"Autonomous Agents on Blockchains: Standards, Execution Models, and Trust Boundaries"* は、AIエージェントとブロックチェーンの統合に4つのレイヤーを提唱しています。
 
 | 論文のレイヤー | 本章での実装 |
 |---|---|
@@ -1007,4 +1007,4 @@ npx hardhat run scripts/test-signatures.ts
 
 サンプルコードは [GitHub リポジトリ](https://github.com/shu-kob/agentic-aa-sandbox) を参照してください。
 
-参考論文: Alqithami, S. (2026). *Standardized Frameworks for Deploying Intelligent Agents on Decentralized Networks.* arXiv:2601.04583.
+参考論文: Alqithami, S. (2026). *Autonomous Agents on Blockchains: Standards, Execution Models, and Trust Boundaries.* arXiv:2601.04583.
