@@ -5,3 +5,4 @@ cache/
 typechain-types/
 dist/
 .claude/
+.DS_Store
