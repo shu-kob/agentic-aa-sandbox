@@ -3,6 +3,35 @@
 
 ---
 
+## 背景: DAOから自律エージェントへ
+
+本章の実装に入る前に、「自律的なソフトウェアがブロックチェーン上で経済活動を行う」というアイデアの歴史を簡単に振り返ります。
+
+2014年、Vitalik Buterinはブログ記事 *"DAOs, DACs, DAs and More: An Incomplete Terminology Guide"* で、ブロックチェーン上の自律的な組織・エージェントの分類を提唱しました。その分類は以下の2軸で整理されます。
+
+|  | **内部資本あり** | **内部資本なし** |
+|---|---|---|
+| **自動化が中心**（人間は周辺） | **DAO** (Decentralized Autonomous Organization) | **DA** (Decentralized Application) |
+| **人間が中心**（意思決定を行う） | **DO** (Decentralized Organization) | **DC** (Decentralized Community) |
+
+出典: Vitalik Buterin, "DAOs, DACs, DAs and More: An Incomplete Terminology Guide", Ethereum Blog, 2014-05-06
+
+ここで重要なのは「自動化が中心か、人間が中心か」という軸です。
+
+- **DO**（分散型組織）: 株主が投票し、取締役会が選ばれ、スマートプロパティが管理される。意思決定を行うのは**人間**
+- **DAO**（分散型自律組織）: システム自体が意思決定を行い、人間はシステムが自力ではできないタスクを担う。BitcoinやNamecoinがこの初期例とされています
+
+Vitalikはさらに、DOとDAOの本質的な違いを「共謀（collusion）」への姿勢で説明しています。
+
+- **DOでは共謀は機能**: 多数決で方向性を決めるのが意図された仕組み
+- **DAOでは共謀はバグ**: 参加者がそれぞれの自己利益に基づいて行動したときに正しい結果が生まれるべき
+
+2014年時点でのDAOは、ルールがスマートコントラクトにハードコードされた比較的単純なものでした。しかし2025年以降、LLMベースのAIエージェントが登場したことで、状況が大きく変わります。エージェントは自然言語で指示を受け、ツールを動的に呼び出し、状況に応じて判断を変えることができます。
+
+本章で実装するのは、まさにこの**「DAOの先にある世界」**です。スマートコントラクトの決定論的なルールと、LLMの柔軟な推論を組み合わせることで、2014年には構想でしかなかった自律エージェント間の取引を実現します。
+
+---
+
 ## はじめに: エージェントが「取引」する時代
 
 2体のAIエージェントがマーケットプレイスで出会います。
@@ -48,7 +77,7 @@ LLMには **Gemini** を使用します。Function Callingに対応しており�
 
 | EIP | 一言で言うと | 本章での用途 |
 |-----|-------------|-------------|
-| **ERC-721** | NFT（非代替性トークン）の標準 | エージェントの「身分証」。Agent IDをNFTとしてミントし、オンチェーンで存在を証明します |
+| **ERC-721** | NFT（非代替性トークン）の標準 | エージェントの「身分証」。Agent IDをNFTとしてミントし、オンチェーンで存在を証明します。ERC-8004の基盤でもあります |
 | **EIP-712** | 構造化された署名データの標準 | エージェントの「契約書」。購入意図（TIS）を人間にも読める形で署名します |
 | **EIP-4337** | アカウント抽象化の標準 | エージェントの「法人カード」。上限額付きの支出権限をスマートアカウントで管理します |
 
@@ -245,6 +274,18 @@ NFTを身分証に使う利点は2つあります。
 
 1. **検証可能性**: 誰でもオンチェーンで「このアドレスはAgent IDを持っているか？」を確認できます
 2. **移転可能性**: エージェントが別の主体に引き継がれる場合、IDの移転がERC-721の標準インターフェースで表現できます
+
+### ERC-8004: Trustless Agents — エージェント専用の標準規格
+
+本章の実装はシンプルなERC-721ベースのIdentityRegistryを使っていますが、より本格的な標準として **ERC-8004 (Trustless Agents)** が提案されています（2025年8月、Draft段階）。
+
+ERC-8004はMetaMask、Ethereum Foundation、Google、Coinbaseのエンジニアが共同で策定しており、以下の3つのレジストリをチェーンごとに1つずつ配置する設計です。
+
+1. **Identity Registry** — ERC-721ベースのエージェントID。サービスエンドポイント（MCP、A2A、ENS、DID等）やウォレットアドレスをメタデータとして紐づけます
+2. **Reputation Registry** — 任意のアドレスがエージェントに対してフィードバック（評価スコア、タグ、詳細URI）を投稿できます。Sybil攻撃への対策として、`getSummary()` は信頼するクライアントアドレスを指定してフィルタリングする設計です
+3. **Validation Registry** — エージェントの作業結果を独立した検証者が検証します。検証方式はプラガブルで、ステーク担保の再実行、zkMLプルーフ、TEEアテステーションなどに対応します
+
+本章のIdentityRegistryとReputationRegistryは、ERC-8004の概念を簡略化した実装と位置づけられます。ERC-8004が正式に採択されれば、これらのコントラクトを標準インターフェースに置き換えることで、異なるマーケットプレイス間でのエージェントの相互運用が可能になります。
 
 ### 評判スコア: ReputationRegistry
 
@@ -954,6 +995,42 @@ Alqithami (2026) の論文 *"Autonomous Agents on Blockchains: Standards, Execut
 
 ---
 
+## 補足: Bitcoin Lightning NetworkとL402 — もう一つのエージェント決済基盤
+
+本章ではEthereumを信頼の基盤として使いましたが、エージェント間決済のアプローチはEthereumだけではありません。Bitcoin Lightning Networkの**L402プロトコル**も注目に値します。
+
+### L402とは何か
+
+L402は、長らく未使用だったHTTPステータスコード **402 (Payment Required)** をBitcoin Lightning Networkで実現するプロトコルです。Lightning Labsが開発しました。
+
+仕組みはシンプルです。
+
+1. エージェントがAPIにリクエストを送信
+2. サーバーがHTTP 402を返し、**Lightningインボイス**と**Macaroonトークン**を提示
+3. エージェントがLightning決済を実行（1秒未満、手数料はほぼゼロ）
+4. 決済の暗号学的証明（preimage）をトークンと共に再送信 → アクセス許可
+
+### なぜエージェントに適しているか
+
+従来の決済手段（クレジットカード、APIキー、請求アカウント）は、人間がチェックアウトボタンを押すことを前提に設計されています。L402はこの前提を覆します。
+
+- **事前の契約関係が不要**: Lightningにアクセスできるクライアントなら即座に決済・認証が可能
+- **マイクロペイメント対応**: API呼び出し1回あたり数円以下の課金が経済的に成立
+- **トークンの委譲が可能**: Macaroonトークンはスコープを制限した上で子エージェントに渡せます。本章のSpendLimitに似た「権限の制限付き委譲」がプロトコルレベルで実現されています
+
+### EthereumアプローチとLightningアプローチの比較
+
+| 観点 | Ethereum (本章) | Bitcoin Lightning (L402) |
+|---|---|---|
+| 信頼モデル | スマートコントラクトによる検証 | 暗号学的な決済証明 |
+| 決済速度 | ブロック確認（数十秒〜数分） | 1秒未満 |
+| 適するユースケース | 権限管理・評判・複雑なロジック | マイクロペイメント・API課金 |
+| エージェントID | ERC-721 NFT | Macaroonトークン |
+
+両者は競合ではなく補完的です。Ethereumの強みはスマートコントラクトによる複雑なルール記述であり、Lightningの強みは高速・低コストな少額決済です。将来的には、エージェントの身元管理はEthereumで、マイクロペイメントはLightningで、という使い分けが現実的かもしれません。
+
+---
+
 ## 環境構築ガイド
 
 ### 1. リポジトリのクローンと依存関係
@@ -1005,6 +1082,10 @@ npx hardhat run scripts/test-signatures.ts
 
 ---
 
-サンプルコードは [GitHub リポジトリ](https://github.com/shu-kob/agentic-aa-sandbox) を参照してください。
+コード全体は [GitHub リポジトリ](https://github.com/shu-kob/agentic-aa-sandbox) を参照してください。
 
-参考論文: Alqithami, S. (2026). *Autonomous Agents on Blockchains: Standards, Execution Models, and Trust Boundaries.* arXiv:2601.04583.
+**参考文献**:
+- Alqithami, S. (2026). *Autonomous Agents on Blockchains: Standards, Execution Models, and Trust Boundaries.* arXiv:2601.04583.
+- Buterin, V. (2014). *DAOs, DACs, DAs and More: An Incomplete Terminology Guide.* Ethereum Blog.
+- ERC-8004: Trustless Agents. Ethereum Improvement Proposals. (Draft, 2025)
+- Lightning Labs. *L402: The Internet-Native Payment Protocol for Agents.* (2026)
