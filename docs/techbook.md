@@ -73,9 +73,9 @@ AIエージェントの「つなぎ方」は、段階的に進化してきまし
 
 ### エージェントの頭脳: Google ADK + Gemini
 
-**Google ADK（Agent Development Kit）** は、LLMベースのエージェントを構築するためのPythonフレームワークです。エージェントの定義、ツール（Function Calling）の登録、マルチエージェント連携をシンプルなAPIで実現できます。
+**Google ADK（Agent Development Kit）** は、LLMベースのエージェントを構築するためのフレームワークです。2025年4月の初回リリース以降、約2週間ごとのペースで更新が続いており、2026年4月時点の最新安定版はv1.28.1です。当初はPythonのみでしたが、現在はTypeScript、Go、Javaの4言語SDKが提供されています。A2Aプロトコル（現在v0.3、Linux Foundation管理下で150以上の組織が参加）のネイティブサポートも組み込まれ、エージェント間連携の標準基盤となっています。なお、グラフベースワークフローや協調エージェントを導入するADK 2.0のアルファ版も公開されています。
 
-LLMには **Gemini** を使用します。Function Callingに対応しており、エージェントが「次にどのツールを呼ぶか」をLLMが推論して決定します。事前にプログラムされたフローではなく、状況に応じて動的に判断を行う点がポイントです。
+LLMには **Gemini** を使用します。本章では **Gemini 2.5 Flash** を使っていますが、2026年6月17日に非推奨となる予定です。後継としてGemini 3.x系（3 Pro、3 Flash、3.1 Pro、3.1 Flash等）がリリースされており、移行先としては **Gemini 3.1 Flash** が自然な選択肢です。Function Callingに対応しており、エージェントが「次にどのツールを呼ぶか」をLLMが推論して決定します。事前にプログラムされたフローではなく、状況に応じて動的に判断を行う点がポイントです。
 
 ### 信頼のインフラ: Ethereum (Sepolia)
 
@@ -84,17 +84,19 @@ LLMには **Gemini** を使用します。Function Callingに対応しており�
 | EIP | 一言で言うと | 本章での用途 |
 |-----|-------------|-------------|
 | **ERC-721** | NFT（非代替性トークン）の標準 | エージェントの「身分証」。Agent IDをNFTとしてミントし、オンチェーンで存在を証明します。ERC-8004の基盤でもあります |
-| **EIP-712** | 構造化された署名データの標準 | エージェントの「契約書」。購入意図（TIS）を人間にも読める形で署名します |
-| **EIP-4337** | アカウント抽象化の標準 | エージェントの「法人カード」。上限額付きの支出権限をスマートアカウントで管理します |
+| **EIP-712** | 構造化された署名データの標準（Final） | エージェントの「契約書」。購入意図（TIS）を人間にも読める形で署名します |
+| **ERC-4337** | アカウント抽象化の標準（Final、2023年10月） | エージェントの「法人カード」。上限額付きの支出権限をスマートアカウントで管理します |
 
 いずれも深掘りはしません。「エージェントが安全に取引するために、こういう道具がある」という使い方の観点で紹介します。
+
+なお、アカウント抽象化の領域は急速に進化しています。2025年5月のPectraアップグレードで導入された **EIP-7702** により、既存のEOA（外部所有アカウント）にスマートコントラクトの機能を一時的に委譲できるようになりました。さらに、Vitalik Buterinが2026年2月に提案した **EIP-8141** は、スマートアカウントをプロトコルレベルでデフォルトにすることを目指しており、2026年後半のHegotaアップグレードでの採用が検討されています（CFIステータス）。ERC-4337の「代替メモリプール」方式は、これらのネイティブ実装への橋渡し的な位置づけとなりつつあります。
 
 ### 開発環境
 
 ```
 # エージェント側
 Python 3.11+
-google-adk >= 1.0.0
+google-adk >= 1.0.0, < 2.0.0   # 2026年4月時点の最新安定版: 1.28.1
 web3.py >= 7.0.0
 
 # ブロックチェーン側
@@ -1174,35 +1176,41 @@ Alqithami (2026) の論文 *"Autonomous Agents on Blockchains: Standards, Execut
 
 **エージェント側**:
 - 複数のマーケットプレイスを横断する検索
-- エージェント間の直接メッセージング（A2A Protocol）
+- A2Aプロトコル（v0.3）によるエージェント間の直接メッセージング
+- ADK 2.0のグラフベースワークフローへの移行
+- Gemini 3.x系への移行（2.5-flashは2026年6月非推奨予定）
 - 長期記憶（過去の取引履歴からの学習）
 
 **ブロックチェーン側**:
-- EIP-712のドメイン分離を完全準拠に
+- ERC-8004メインネットコントラクトへの移行（Identity / Reputation / Validation Registry）
+- EIP-7702によるEOAのスマートアカウント化
+- EIP-8141（ネイティブアカウント抽象化）への対応準備
 - SpendLimitに期間制限（24時間あたりの上限等）を追加
-- 評判システムを分散化（現在はowner権限のみ）
 
 **統合**:
 - PDRをフルに実装し、ポリシーエンジンによる自動承認フローを構築
+- L402 / x402によるマイクロペイメント決済の統合
 - オンチェーン/オフチェーンのハイブリッド検証
-- Google Cloud上でのエージェントのホスティング（Cloud Run等）
+- Google Cloud Agent Engineでのプロダクションデプロイ
 
 ---
 
-## 補足: Bitcoin Lightning NetworkとL402 — もう一つのエージェント決済基盤
+## 補足: HTTP 402ベースのエージェント決済 — L402とx402
 
-本章ではEthereumを信頼の基盤として使いましたが、エージェント間決済のアプローチはEthereumだけではありません。Bitcoin Lightning Networkの**L402プロトコル**も注目に値します。
+本章ではEthereumを信頼の基盤として使いましたが、エージェント間決済のアプローチはEthereumだけではありません。HTTPステータスコード402 (Payment Required) を活用した **L402** と **x402** も注目に値します。
 
 ### L402とは何か
 
-L402は、長らく未使用だったHTTPステータスコード **402 (Payment Required)** をBitcoin Lightning Networkで実現するプロトコルです。Lightning Labsが開発しました。
+L402は、長らく未使用だったHTTPステータスコード **402 (Payment Required)** をBitcoin Lightning Networkで実現するプロトコルです。Lightning Labsが開発し、2020年に「LSAT」として公開された後、L402に改名されました。2026年2月には **lightning-agent-tools**（AIエージェント向けの7つのコンポーザブルスキル）と **lnget**（L402対応CLIクライアント）がリリースされ、エージェント決済のツールキットが充実しています。
 
 仕組みはシンプルです。
 
 1. エージェントがAPIにリクエストを送信
-2. サーバーがHTTP 402を返し、**Lightningインボイス**と**Macaroonトークン**を提示
+2. サーバーがHTTP 402を返し、**Lightningインボイス**と**トークン**を提示
 3. エージェントがLightning決済を実行（1秒未満、手数料はほぼゼロ）
 4. 決済の暗号学的証明（preimage）をトークンと共に再送信 → アクセス許可
+
+なお、プロトコル仕様は更新されており、`WWW-Authenticate` ヘッダーのトークン形式が `macaroon=` から `token=` に変更され、Macaroon以外のトークン形式にも対応可能になっています（Macaroonは引き続き推奨デフォルト）。
 
 ### なぜエージェントに適しているか
 
@@ -1212,16 +1220,30 @@ L402は、長らく未使用だったHTTPステータスコード **402 (Payment
 - **マイクロペイメント対応**: API呼び出し1回あたり数円以下の課金が経済的に成立
 - **トークンの委譲が可能**: Macaroonトークンはスコープを制限した上で子エージェントに渡せます。本章のSpendLimitに似た「権限の制限付き委譲」がプロトコルレベルで実現されています
 
-### EthereumアプローチとLightningアプローチの比較
+### x402: Coinbaseによるステーブルコインベースの対抗規格
 
-| 観点 | Ethereum (本章) | Bitcoin Lightning (L402) |
+L402と同じHTTP 402を使いつつ、決済レイヤーをEVMチェーン上のUSDCに置き換えたのが **x402** です。2026年4月2日にCoinbaseとLinux Foundationが **x402 Foundation** を設立し、Stripe、Cloudflare、Shopify、Solanaが創設メンバーとして参加。AWS、Google、Microsoft、Visa、Mastercardも支持を表明しています。
+
+| 観点 | L402 (Lightning Labs) | x402 (Coinbase) |
 |---|---|---|
-| 信頼モデル | スマートコントラクトによる検証 | 暗号学的な決済証明 |
-| 決済速度 | ブロック確認（数十秒〜数分） | 1秒未満 |
-| 適するユースケース | 権限管理・評判・複雑なロジック | マイクロペイメント・API課金 |
-| エージェントID | ERC-721 NFT | Macaroonトークン |
+| 決済通貨 | BTC（Satoshi建て、変動あり） | USDC（ドル建て、安定） |
+| 決済レイヤー | Bitcoin Lightning Network | Base, Ethereum, Solana等 |
+| 検証方式 | ステートレス（暗号学的証明のみ） | オンチェーン確認（facilitator経由） |
+| 信頼モデル | 分散型（Bitcoin合意） | Circle (USDC発行体) + Coinbase |
+| 速度 | ミリ秒 | 1-3秒（Base） |
 
-両者は競合ではなく補完的です。Ethereumの強みはスマートコントラクトによる複雑なルール記述であり、Lightningの強みは高速・低コストな少額決済です。将来的には、エージェントの身元管理はEthereumで、マイクロペイメントはLightningで、という使い分けが現実的かもしれません。
+両者は競合ではなく、Bitcoin/Lightningエコシステムとの接続にはL402、EVM/ステーブルコインとの接続にはx402という棲み分けが形成されつつあります。サーバー側が両方のチャレンジを発行し、エージェントが持つウォレットに応じてどちらかで決済する、というハイブリッド構成も可能です。
+
+### EthereumアプローチとHTTP 402アプローチの比較
+
+| 観点 | Ethereum (本章) | L402 / x402 |
+|---|---|---|
+| 信頼モデル | スマートコントラクトによる検証 | 暗号学的な決済証明 / オンチェーン確認 |
+| 決済速度 | ブロック確認（数十秒〜数分） | ミリ秒〜数秒 |
+| 適するユースケース | 権限管理・評判・複雑なロジック | マイクロペイメント・API課金 |
+| エージェントID | ERC-721 NFT (ERC-8004) | トークン / ウォレットアドレス |
+
+これらは補完的です。Ethereumの強みはスマートコントラクトによる複雑なルール記述と身元管理（ERC-8004）であり、L402/x402の強みは高速・低コストな少額決済です。エージェントの身元管理とレピュテーションはEthereumで、API呼び出しごとのマイクロペイメントはL402/x402で、という使い分けが現実的な構成になりつつあります。ERC-8004のv2仕様でx402との統合が検討されているのも、この方向性を裏づけています。
 
 ---
 
@@ -1281,5 +1303,6 @@ npx hardhat run scripts/test-signatures.ts
 **参考文献**:
 - Alqithami, S. (2026). *Autonomous Agents on Blockchains: Standards, Execution Models, and Trust Boundaries.* arXiv:2601.04583.
 - Buterin, V. (2014). *DAOs, DACs, DAs and More: An Incomplete Terminology Guide.* Ethereum Blog.
-- ERC-8004: Trustless Agents. Ethereum Improvement Proposals. (Draft, 2025)
-- Lightning Labs. *L402: The Internet-Native Payment Protocol for Agents.* (2026)
+- ERC-8004: Trustless Agents. Ethereum Improvement Proposals. (Draft, 2025. メインネットデプロイ: 2026年1月)
+- Lightning Labs. (2026). *The Future Is Now: Why L402 Is the Internet-Native Payments Protocol for Agents.*
+- Coinbase / Linux Foundation. (2026). *x402: The Internet-Native Payment Protocol.* x402.org
