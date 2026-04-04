@@ -293,6 +293,190 @@ ERC-8004はMetaMask、Ethereum Foundation、Google、Coinbaseのエンジニア�
 
 本章のIdentityRegistryとReputationRegistryは、ERC-8004の概念を簡略化した実装と位置づけられます。ERC-8004が正式に採択されれば、これらのコントラクトを標準インターフェースに置き換えることで、異なるマーケットプレイス間でのエージェントの相互運用が可能になります。
 
+以下では、ERC-8004の3つのレジストリを実装したコードを紹介します。
+
+#### Identity Registry — エージェントの身分証＋サービスカタログ
+
+ERC-721を継承したNFTに、サービスエンドポイント（MCPサーバーのURL、A2Aプロトコルのアドレスなど）と複数のウォレットアドレスを紐づけます。エージェントのオーナーだけがエンドポイントの追加・削除やウォレットのリンクを行えます。
+
+```solidity
+// contracts/ERC8004/ERC8004Identity.sol (抜粋)
+contract ERC8004Identity is ERC721, Ownable, IERC8004Identity {
+    uint256 private _nextAgentId;
+
+    // agentId => endpointType => url
+    mapping(uint256 => mapping(string => string)) private _endpoints;
+    // agentId => list of endpoint types (for enumeration)
+    mapping(uint256 => string[]) private _endpointTypes;
+
+    // agentId => linked wallets
+    mapping(uint256 => address[]) private _linkedWallets;
+
+    modifier onlyAgentOwner(uint256 agentId) {
+        require(ownerOf(agentId) == msg.sender, "Not agent owner");
+        _;
+    }
+
+    function registerAgent(address agent)
+        external onlyOwner returns (uint256 agentId)
+    {
+        agentId = _nextAgentId++;
+        _safeMint(agent, agentId);
+        emit AgentRegistered(agent, agentId);
+    }
+
+    function setServiceEndpoint(
+        uint256 agentId,
+        string calldata endpointType,
+        string calldata url
+    ) external onlyAgentOwner(agentId) {
+        // "mcp", "a2a", "ens", "did" など任意のタイプを登録
+        _endpoints[agentId][endpointType] = url;
+        emit ServiceEndpointSet(agentId, endpointType, url);
+    }
+
+    function linkWallet(uint256 agentId, address wallet)
+        external onlyAgentOwner(agentId)
+    {
+        _linkedWallets[agentId].push(wallet);
+        emit WalletLinked(agentId, wallet);
+    }
+}
+```
+
+先ほどのシンプルな`IdentityRegistry`との違いは、**エージェントが自分自身のメタデータを管理できる**点です。MCPサーバーのURLやA2Aプロトコルのエンドポイントを登録しておけば、他のエージェントがオンチェーンで「このエージェントとどう通信すればよいか」を発見できます。
+
+#### Reputation Registry — パーミッションレスな評価システム
+
+ERC-8004のReputation Registryは、本章の簡易版`ReputationRegistry`（オーナーだけがスコアを記録）とは根本的に設計が異なります。**誰でもフィードバックを投稿でき**、読み取り時に信頼するレビュアーを指定してフィルタリングするという、Sybil攻撃に耐性のある設計です。
+
+```solidity
+// contracts/ERC8004/ERC8004Reputation.sol (抜粋)
+contract ERC8004Reputation is IERC8004Reputation {
+    IERC721 public immutable identityRegistry;
+
+    mapping(uint256 => Feedback) private _feedbacks;
+    mapping(uint256 => uint256[]) private _agentFeedbackIds;
+
+    struct Feedback {
+        address reviewer;    // 誰がレビューしたか
+        uint256 agentId;
+        uint8 score;         // 1-5
+        string tag;          // "reliable", "fast" など
+        string detailURI;    // IPFS等の詳細URI
+        uint256 timestamp;
+    }
+
+    /// @notice 誰でもフィードバックを投稿できる（パーミッションレス）
+    function submitFeedback(
+        uint256 agentId,
+        uint8 score,
+        string calldata tag,
+        string calldata detailURI
+    ) external returns (uint256 feedbackId) {
+        require(score >= 1 && score <= 5, "Score must be 1-5");
+        // ... フィードバックを保存
+    }
+
+    /// @notice 信頼するレビュアーだけの集計を返す（Sybil対策）
+    function getSummary(
+        uint256 agentId,
+        address[] calldata trustedReviewers
+    ) external view returns (Summary memory) {
+        // trustedReviewersが空なら全件集計
+        // 指定があればそのアドレスのレビューだけをカウント
+        for (uint256 i = 0; i < ids.length; i++) {
+            Feedback storage fb = _feedbacks[ids[i]];
+            if (trustedReviewers.length == 0
+                || _isTrusted(fb.reviewer, trustedReviewers))
+            {
+                totalScore += fb.score;
+                count++;
+            }
+        }
+        uint256 avgScaled = (totalScore * 100) / count; // 450 = 4.50
+        return Summary({totalReviews: count, averageScore: avgScaled});
+    }
+}
+```
+
+ポイントは `getSummary()` の設計です。攻撃者が大量の偽アカウントから高評価を投稿しても、呼び出し側が「信頼するレビュアー」のリストを渡せば、それ以外のフィードバックは集計から除外されます。書き込みはオープン、読み取りはフィルタリング可能というのがERC-8004のSybil対策の考え方です。
+
+#### Validation Registry — プラガブルな検証
+
+3つ目のレジストリは、エージェントの作業結果を第三者が検証する仕組みです。検証方式は3種類用意されており、ユースケースに応じて選択します。
+
+```solidity
+// contracts/ERC8004/ERC8004Validation.sol (抜粋)
+contract ERC8004Validation is IERC8004Validation {
+    enum ValidationMethod {
+        StakedReExecution,  // バリデータがステークを担保に再実行
+        ZkmlProof,          // ゼロ知識ML証明
+        TeeAttestation      // TEE（信頼できる実行環境）の証明
+    }
+
+    enum ValidationStatus { Pending, Approved, Rejected, Disputed }
+
+    struct ValidationRequest {
+        uint256 agentId;
+        address requester;
+        bytes32 taskHash;       // 検証対象のタスク/出力のハッシュ
+        string resultURI;       // 作業結果のURI
+        ValidationMethod method;
+        ValidationStatus status;
+        address validator;
+        uint256 stake;          // バリデータがロックしたETH
+        uint256 timestamp;
+    }
+
+    /// @notice 検証をリクエスト
+    function requestValidation(
+        uint256 agentId,
+        bytes32 taskHash,
+        string calldata resultURI,
+        ValidationMethod method
+    ) external returns (uint256 requestId) {
+        // ... リクエストを保存
+    }
+
+    /// @notice バリデータが判定を提出（ETHステーク付き）
+    function submitValidation(
+        uint256 requestId,
+        ValidationStatus status
+    ) external payable {
+        req.validator = msg.sender;
+        req.status = status;
+        req.stake = msg.value; // ステークとしてロック
+    }
+
+    /// @notice 異議申し立て
+    function disputeValidation(uint256 requestId) external {
+        req.status = ValidationStatus.Disputed;
+    }
+}
+```
+
+このレジストリにより、「エージェントが本当に正しい仕事をしたか？」をオンチェーンで検証可能になります。例えば `StakedReExecution` では、バリデータがETHをステークして同じタスクを再実行し、結果が一致すればApproved、一致しなければステークが没収される仕組みです。
+
+#### 3つのレジストリの連携
+
+ERC-8004の3つのレジストリは独立したコントラクトですが、Identity Registryを共通の基盤として連携します。
+
+```
+Identity Registry (ERC-721)
+    │
+    ├── Reputation Registry ──→ agentIdに紐づく評価を蓄積
+    │
+    └── Validation Registry ──→ agentIdの作業結果を検証
+```
+
+買い手エージェントが売り手を選ぶ際の判断フローは以下のようになります。
+
+1. **Identity Registry** で売り手のAgent IDを確認し、MCPやA2Aのエンドポイントを取得
+2. **Reputation Registry** の `getSummary()` で、信頼できるレビュアーによる評価スコアを確認
+3. **Validation Registry** で過去の作業の検証結果を確認
+4. すべてが基準を満たせば取引を開始
+
 ### 評判スコア: ReputationRegistry
 
 身分証があるだけでは十分ではありません。免許証を持っているだけで信頼できるわけではないのと同じです。
