@@ -1,0 +1,1300 @@
+# 2体のAIエージェントがマーケットプレイスで出会う
+## 分散エージェント × ブロックチェーンで実現する「信頼なき信頼」
+
+---
+
+## 背景: DAOから自律エージェントへ
+
+本章の実装に入る前に、「自律的なソフトウェアがブロックチェーン上で経済活動を行う」というアイデアの歴史を簡単に振り返ります。
+
+2014年、Vitalik Buterinはブログ記事 *"DAOs, DACs, DAs and More: An Incomplete Terminology Guide"* で、ブロックチェーン上の自律的な組織・エージェントの分類を提唱しました。その分類は以下の2軸で整理されます。
+
+|  | **内部資本あり** | **内部資本なし** |
+|---|---|---|
+| **自動化が中心**（人間は周辺） | **DAO** (Decentralized Autonomous Organization) | **DA** (Decentralized Application) |
+| **人間が中心**（意思決定を行う） | **DO** (Decentralized Organization) | **DC** (Decentralized Community) |
+
+出典: Vitalik Buterin, "DAOs, DACs, DAs and More: An Incomplete Terminology Guide", Ethereum Blog, 2014-05-06
+
+ここで重要なのは「自動化が中心か、人間が中心か」という軸です。
+
+- **DO**（分散型組織）: 株主が投票し、取締役会が選ばれ、スマートプロパティが管理される。意思決定を行うのは**人間**
+- **DAO**（分散型自律組織）: システム自体が意思決定を行い、人間はシステムが自力ではできないタスクを担う。BitcoinやNamecoinがこの初期例とされています
+
+Vitalikはさらに、DOとDAOの本質的な違いを「共謀（collusion）」への姿勢で説明しています。
+
+- **DOでは共謀は機能**: 多数決で方向性を決めるのが意図された仕組み
+- **DAOでは共謀はバグ**: 参加者がそれぞれの自己利益に基づいて行動したときに正しい結果が生まれるべき
+
+2014年時点でのDAOは、ルールがスマートコントラクトにハードコードされた比較的単純なものでした。しかし2025年以降、LLMベースのAIエージェントが登場したことで、状況が大きく変わります。エージェントは自然言語で指示を受け、ツールを動的に呼び出し、状況に応じて判断を変えることができます。
+
+本章で実装するのは、まさにこの**「DAOの先にある世界」**です。スマートコントラクトの決定論的なルールと、LLMの柔軟な推論を組み合わせることで、2014年には構想でしかなかった自律エージェント間の取引を実現します。
+
+---
+
+## はじめに: エージェントが「取引」する時代
+
+AIエージェントの「つなぎ方」は、段階的に進化してきました。
+
+まず登場したのが**MCP（Model Context Protocol）**です。MCPは、LLMが外部ツールやデータソースに接続するための標準プロトコルです。これにより、エージェントはデータベースの検索やAPIの呼び出しといった「道具」をプラグイン的に使えるようになりました。しかしMCPはあくまで**1体のエージェントと外部リソースの接続**を担うものであり、エージェント同士が協調する仕組みは別に必要です。
+
+次に来たのが**階層型のエージェント間連携（A2A）**です。Google ADKのようなフレームワークでは、親エージェントが子エージェントにタスクを委譲する階層構造を組むことができます。チーム内のエージェントは同じオーナーの管理下にあり、互いに信頼できる前提で動きます。社内のマイクロサービスが互いを呼び合うようなイメージです。
+
+ここまでは「信頼できる相手」との連携でした。では、**信頼関係のない、独立したエージェント同士**が取引するとどうなるでしょうか？
+
+2体のAIエージェントがマーケットプレイスで出会います。一方はGPUコンピュートを買いたい**買い手エージェント**。もう一方はそれを提供する**売り手エージェント**です。両者とも、背後にいる人間のオーナーから自律的に行動する権限を委譲されています。しかし、2体のオーナーは別人であり、互いに面識もありません。
+
+ここで壁になるのが**信頼**です。
+
+- 売り手は本当にGPUを提供するのか？
+- 買い手は本当に支払うのか？
+- しかも、どちらのオーナーも今はオフライン
+
+階層型A2Aでは「同じオーナーの傘の下」という暗黙の信頼がありました。しかし分散型の世界では、中央集権的な仲介者なしに取引を成立させる必要があります。
+
+**ブロックチェーンが、その「信頼の代替」になります。**
+
+本章では、Google ADK（Agent Development Kit）とGeminiで構築したAIエージェントが、Ethereumスマートコントラクトを「信頼の道具」として使い、人間不在で安全に取引を完了するシステムを実装します。
+
+作るものは以下の4つです。
+
+1. **買い手エージェント** — 予算内で最良の取引相手を見つけ、購入を実行
+2. **売り手エージェント** — 買い手の身元と支払いを検証し、サービスを提供
+3. **ブロックチェーン連携ツール** — エージェントがスマートコントラクトと対話するための関数群
+4. **マーケットプレイス** — 2体のエージェントを連携させるオーケストレーター
+
+ブロックチェーンの知識は最小限で読めるように構成しています。使うEIPは3つだけです。
+
+---
+
+## 技術スタック概観
+
+本章で使う技術は大きく2つの領域に分かれます。
+
+### エージェントの頭脳: Google ADK + Gemini
+
+**Google ADK（Agent Development Kit）** は、LLMベースのエージェントを構築するためのフレームワークです。2025年4月の初回リリース以降、約2週間ごとのペースで更新が続いており、2026年4月時点の最新安定版はv1.28.1です。当初はPythonのみでしたが、現在はTypeScript、Go、Javaの4言語SDKが提供されています。A2Aプロトコル（現在v0.3、Linux Foundation管理下で150以上の組織が参加）のネイティブサポートも組み込まれ、エージェント間連携の標準基盤となっています。なお、グラフベースワークフローや協調エージェントを導入するADK 2.0のアルファ版も公開されています。
+
+LLMには **Gemini** を使用します。本章では **Gemini 2.5 Flash** を使っていますが、2026年6月17日に非推奨となる予定です。後継としてGemini 3.x系（3 Pro、3 Flash、3.1 Pro、3.1 Flash等）がリリースされており、移行先としては **Gemini 3.1 Flash** が自然な選択肢です。Function Callingに対応しており、エージェントが「次にどのツールを呼ぶか」をLLMが推論して決定します。事前にプログラムされたフローではなく、状況に応じて動的に判断を行う点がポイントです。
+
+### 信頼のインフラ: Ethereum (Sepolia)
+
+ブロックチェーンは「エージェント間の信頼を担保する基盤」として使います。以下の3つのEthereum標準を、それぞれ特定の目的で軽く使います。
+
+| EIP | 一言で言うと | 本章での用途 |
+|-----|-------------|-------------|
+| **ERC-721** | NFT（非代替性トークン）の標準 | エージェントの「身分証」。Agent IDをNFTとしてミントし、オンチェーンで存在を証明します。ERC-8004の基盤でもあります |
+| **EIP-712** | 構造化された署名データの標準（Final） | エージェントの「契約書」。購入意図（TIS）を人間にも読める形で署名します |
+| **ERC-4337** | アカウント抽象化の標準（Final、2023年10月） | エージェントの「法人カード」。上限額付きの支出権限をスマートアカウントで管理します |
+
+いずれも深掘りはしません。「エージェントが安全に取引するために、こういう道具がある」という使い方の観点で紹介します。
+
+なお、アカウント抽象化の領域は急速に進化しています。2025年5月のPectraアップグレードで導入された **EIP-7702** により、既存のEOA（外部所有アカウント）にスマートコントラクトの機能を一時的に委譲できるようになりました。さらに、Vitalik Buterinが2026年2月に提案した **EIP-8141** は、スマートアカウントをプロトコルレベルでデフォルトにすることを目指しており、2026年後半のHegotaアップグレードでの採用が検討されています（CFIステータス）。ERC-4337の「代替メモリプール」方式は、これらのネイティブ実装への橋渡し的な位置づけとなりつつあります。
+
+### 開発環境
+
+```
+# エージェント側
+Python 3.11+
+google-adk >= 1.0.0, < 2.0.0   # 2026年4月時点の最新安定版: 1.28.1
+web3.py >= 7.0.0
+
+# ブロックチェーン側
+Node.js 18+
+Hardhat 2.28+
+Solidity 0.8.28
+@openzeppelin/contracts 5.x
+ethers.js v6
+```
+
+---
+
+## エージェントを作る: ADK入門
+
+### ADKの3つの基本概念
+
+ADKでエージェントを作るには、3つの概念を理解する必要があります。
+
+1. **Agent** — LLMで動く自律的なエージェント。指示（instruction）とツールを持ちます
+2. **Tool** — エージェントが呼び出せる関数。Pythonの普通の関数をそのまま登録できます
+3. **Runner** — エージェントを実行する環境。ユーザーのメッセージを受け取り、エージェントの応答を返します
+
+```
+User → Runner → Agent → LLM (Gemini)
+                  ↓
+                Tool (blockchain, etc.)
+```
+
+### 買い手エージェントの実装
+
+買い手エージェントは「予算内で最良の取引相手を見つけ、購入を実行する」という指示を持ちます。ツールとしてブロックチェーン連携関数を登録します。
+
+```python
+# agent/buyer_agent.py
+from google.adk.agents import Agent
+
+from tools.blockchain import (
+    check_agent_identity,
+    create_purchase_intent,
+    execute_payment,
+    get_remaining_allowance,
+    get_reputation,
+    list_marketplace_inventory,
+)
+
+BUYER_INSTRUCTION = """\
+You are a buyer agent operating in a decentralized GPU compute marketplace.
+Your owner has delegated you a spending budget via a smart account on Ethereum.
+
+Your workflow for purchasing:
+1. Check the marketplace inventory using list_marketplace_inventory.
+2. When you find a suitable item, verify the seller's identity
+   with check_agent_identity.
+3. Check the seller's reputation score with get_reputation.
+   Only buy from sellers with score >= 10.
+4. Confirm your remaining budget with get_remaining_allowance.
+5. If everything looks good, create a purchase intent
+   with create_purchase_intent.
+6. Execute the payment with execute_payment.
+
+Always verify the seller BEFORE buying. Never exceed your spend limit.
+Report each step clearly so your actions are transparent and auditable.
+"""
+
+buyer_agent = Agent(
+    name="buyer_agent",
+    model="gemini-2.5-flash",
+    description="Buys GPU compute from the marketplace "
+                "after verifying seller trust on-chain.",
+    instruction=BUYER_INSTRUCTION,
+    tools=[
+        list_marketplace_inventory,
+        check_agent_identity,
+        get_reputation,
+        get_remaining_allowance,
+        create_purchase_intent,
+        execute_payment,
+    ],
+)
+```
+
+ポイントは `instruction` です。自然言語で「何をすべきか」を記述するだけで、Geminiが各ステップでどのツールを呼ぶかを動的に判断します。固定のフロー制御は書いていません。
+
+### 売り手エージェントの実装
+
+売り手は逆の立場です。「信頼できる買い手にのみ販売し、支払いをオンチェーンで確認してから納品する」という指示を持ちます。
+
+```python
+# agent/seller_agent.py
+from google.adk.agents import Agent
+
+from tools.blockchain import (
+    check_agent_identity,
+    check_transaction,
+    get_reputation,
+    list_marketplace_inventory,
+)
+
+SELLER_INSTRUCTION = """\
+You are a seller agent providing GPU compute resources
+in a decentralized marketplace.
+
+Your workflow when a buyer wants to purchase:
+1. Verify the buyer's identity using check_agent_identity.
+   Only sell to verified agents.
+2. Check the buyer's reputation with get_reputation
+   for risk assessment.
+3. After the buyer executes a payment,
+   verify the transaction with check_transaction.
+4. If the payment is confirmed on-chain,
+   approve the delivery of compute resources.
+
+You can show your inventory with list_marketplace_inventory.
+Never deliver resources without confirming on-chain payment first.
+Report each verification step clearly.
+"""
+
+seller_agent = Agent(
+    name="seller_agent",
+    model="gemini-2.5-flash",
+    description="Sells GPU compute and verifies buyer trust "
+                "and payment on-chain.",
+    instruction=SELLER_INSTRUCTION,
+    tools=[
+        list_marketplace_inventory,
+        check_agent_identity,
+        get_reputation,
+        check_transaction,
+    ],
+)
+```
+
+買い手と売り手のツールセットが異なる点に注目してください。買い手は `execute_payment` を持ちますが、売り手は持ちません。売り手は `check_transaction` で支払いを検証することしかできません。**ツールの分離が、権限の分離になります**。
+
+### Geminiの Function Calling: エージェントが「ブロックチェーンを叩く」仕組み
+
+ADKのツールは、Pythonの普通の関数です。docstringが自動的にFunction Callingのスキーマに変換されます。
+
+```python
+def get_reputation(agent_id: int) -> dict:
+    """Get the on-chain reputation score for an Agent ID.
+
+    Args:
+        agent_id: The numeric Agent ID (token ID from IdentityRegistry).
+
+    Returns:
+        dict: Reputation data including success_tasks and score.
+    """
+    # ... ブロックチェーンを呼ぶ実装 ...
+```
+
+Geminiはこのdocstringを読んで、「売り手の信頼度を確認するにはこの関数を呼べばいい」と判断します。引数の型（`int`）も自動的にスキーマに反映されます。
+
+これがADKの大きな利点です。エージェントの「思考」と「行動」を自然言語と関数のペアで記述でき、ブロックチェーンのような複雑な外部システムとの連携も、ツール関数を1つ書くだけで実現できます。
+
+---
+
+## 信頼の基盤: オンチェーン・アイデンティティ
+
+### 「相手は誰か？」——Agent ID (ERC-721)
+
+マーケットプレイスで最初に行うべきは、相手の身元確認です。
+
+現実世界では運転免許証やパスポートが身分証になります。エージェントの世界では、**ERC-721のNFT**がその役割を果たします。各エージェントに固有のトークン（Agent ID）をミントし、そのトークンの所有がエージェントの「存在証明」になります。
+
+```solidity
+// contracts/AgentRegistry.sol (抜粋)
+contract IdentityRegistry is ERC721, Ownable {
+    uint256 private _nextTokenId;
+
+    function registerAgent(address agent)
+        external onlyOwner returns (uint256)
+    {
+        uint256 tokenId = _nextTokenId++;
+        _safeMint(agent, tokenId);
+        emit AgentRegistered(agent, tokenId);
+        return tokenId;
+    }
+}
+```
+
+NFTを身分証に使う利点は2つあります。
+
+1. **検証可能性**: 誰でもオンチェーンで「このアドレスはAgent IDを持っているか？」を確認できます
+2. **移転可能性**: エージェントが別の主体に引き継がれる場合、IDの移転がERC-721の標準インターフェースで表現できます
+
+### ERC-8004: Trustless Agents — エージェント専用の標準規格
+
+本章の実装はシンプルなERC-721ベースのIdentityRegistryを使っていますが、より本格的な標準として **ERC-8004 (Trustless Agents)** が策定されています。
+
+ERC-8004は2025年8月にMetaMaskのMarco De Rossi、Ethereum FoundationのDavide Crapis（dAIチームAIリード）、GoogleのJordan Ellis、CoinbaseのErik Reppelらが共同で提案しました。EIPステータスは2026年4月時点でもDraftですが、コアコントラクト（Identity RegistryとReputation Registry）は監査済みで、2026年1月29日にEthereumメインネットにデプロイされています。2026年3月17日には公式ローンチイベント「8004 Launch Day」が開催され、Base・Optimism・ArbitrumなどのL2への展開も進行中です。
+
+ENS、EigenLayer、The Graph、Taikoなどのチームを含む100名以上のコントリビュータが参加しており、v2仕様ではMCPサポートの強化やx402との統合が検討されています。
+
+ERC-8004は以下の3つのレジストリをチェーンごとに1つずつ配置する設計です。
+
+1. **Identity Registry** — ERC-721ベースのエージェントID。サービスエンドポイント（MCP、A2A、ENS、DID等）やウォレットアドレスをメタデータとして紐づけます
+2. **Reputation Registry** — 任意のアドレスがエージェントに対してフィードバック（評価スコア、タグ、詳細URI）を投稿できます。Sybil攻撃への対策として、`getSummary()` は信頼するクライアントアドレスを指定してフィルタリングする設計です
+3. **Validation Registry** — エージェントの作業結果を独立した検証者が検証します。検証方式はプラガブルで、ステーク担保の再実行、zkMLプルーフ、TEEアテステーションなどに対応します
+
+本章のIdentityRegistryとReputationRegistryは、ERC-8004の概念を簡略化した実装と位置づけられます。メインネット上の標準コントラクトに置き換えることで、異なるマーケットプレイス間でのエージェントの相互運用が可能になります。
+
+以下では、ERC-8004の3つのレジストリを実装したコードを紹介します。
+
+#### Identity Registry — エージェントの身分証＋サービスカタログ
+
+ERC-721を継承したNFTに、サービスエンドポイント（MCPサーバーのURL、A2Aプロトコルのアドレスなど）と複数のウォレットアドレスを紐づけます。エージェントのオーナーだけがエンドポイントの追加・削除やウォレットのリンクを行えます。
+
+```solidity
+// contracts/ERC8004/ERC8004Identity.sol (抜粋)
+contract ERC8004Identity is ERC721, Ownable, IERC8004Identity {
+    uint256 private _nextAgentId;
+
+    // agentId => endpointType => url
+    mapping(uint256 => mapping(string => string)) private _endpoints;
+    // agentId => list of endpoint types (for enumeration)
+    mapping(uint256 => string[]) private _endpointTypes;
+
+    // agentId => linked wallets
+    mapping(uint256 => address[]) private _linkedWallets;
+
+    modifier onlyAgentOwner(uint256 agentId) {
+        require(ownerOf(agentId) == msg.sender, "Not agent owner");
+        _;
+    }
+
+    function registerAgent(address agent)
+        external onlyOwner returns (uint256 agentId)
+    {
+        agentId = _nextAgentId++;
+        _safeMint(agent, agentId);
+        emit AgentRegistered(agent, agentId);
+    }
+
+    function setServiceEndpoint(
+        uint256 agentId,
+        string calldata endpointType,
+        string calldata url
+    ) external onlyAgentOwner(agentId) {
+        // "mcp", "a2a", "ens", "did" など任意のタイプを登録
+        _endpoints[agentId][endpointType] = url;
+        emit ServiceEndpointSet(agentId, endpointType, url);
+    }
+
+    function linkWallet(uint256 agentId, address wallet)
+        external onlyAgentOwner(agentId)
+    {
+        _linkedWallets[agentId].push(wallet);
+        emit WalletLinked(agentId, wallet);
+    }
+}
+```
+
+先ほどのシンプルな`IdentityRegistry`との違いは、**エージェントが自分自身のメタデータを管理できる**点です。MCPサーバーのURLやA2Aプロトコルのエンドポイントを登録しておけば、他のエージェントがオンチェーンで「このエージェントとどう通信すればよいか」を発見できます。
+
+#### Reputation Registry — パーミッションレスな評価システム
+
+ERC-8004のReputation Registryは、本章の簡易版`ReputationRegistry`（オーナーだけがスコアを記録）とは根本的に設計が異なります。**誰でもフィードバックを投稿でき**、読み取り時に信頼するレビュアーを指定してフィルタリングするという、Sybil攻撃に耐性のある設計です。
+
+```solidity
+// contracts/ERC8004/ERC8004Reputation.sol (抜粋)
+contract ERC8004Reputation is IERC8004Reputation {
+    IERC721 public immutable identityRegistry;
+
+    mapping(uint256 => Feedback) private _feedbacks;
+    mapping(uint256 => uint256[]) private _agentFeedbackIds;
+
+    struct Feedback {
+        address reviewer;    // 誰がレビューしたか
+        uint256 agentId;
+        uint8 score;         // 1-5
+        string tag;          // "reliable", "fast" など
+        string detailURI;    // IPFS等の詳細URI
+        uint256 timestamp;
+    }
+
+    /// @notice 誰でもフィードバックを投稿できる（パーミッションレス）
+    function submitFeedback(
+        uint256 agentId,
+        uint8 score,
+        string calldata tag,
+        string calldata detailURI
+    ) external returns (uint256 feedbackId) {
+        require(score >= 1 && score <= 5, "Score must be 1-5");
+        // ... フィードバックを保存
+    }
+
+    /// @notice 信頼するレビュアーだけの集計を返す（Sybil対策）
+    function getSummary(
+        uint256 agentId,
+        address[] calldata trustedReviewers
+    ) external view returns (Summary memory) {
+        // trustedReviewersが空なら全件集計
+        // 指定があればそのアドレスのレビューだけをカウント
+        for (uint256 i = 0; i < ids.length; i++) {
+            Feedback storage fb = _feedbacks[ids[i]];
+            if (trustedReviewers.length == 0
+                || _isTrusted(fb.reviewer, trustedReviewers))
+            {
+                totalScore += fb.score;
+                count++;
+            }
+        }
+        uint256 avgScaled = (totalScore * 100) / count; // 450 = 4.50
+        return Summary({totalReviews: count, averageScore: avgScaled});
+    }
+}
+```
+
+ポイントは `getSummary()` の設計です。攻撃者が大量の偽アカウントから高評価を投稿しても、呼び出し側が「信頼するレビュアー」のリストを渡せば、それ以外のフィードバックは集計から除外されます。書き込みはオープン、読み取りはフィルタリング可能というのがERC-8004のSybil対策の考え方です。
+
+#### Validation Registry — プラガブルな検証
+
+3つ目のレジストリは、エージェントの作業結果を第三者が検証する仕組みです。検証方式は3種類用意されており、ユースケースに応じて選択します。
+
+```solidity
+// contracts/ERC8004/ERC8004Validation.sol (抜粋)
+contract ERC8004Validation is IERC8004Validation {
+    enum ValidationMethod {
+        StakedReExecution,  // バリデータがステークを担保に再実行
+        ZkmlProof,          // ゼロ知識ML証明
+        TeeAttestation      // TEE（信頼できる実行環境）の証明
+    }
+
+    enum ValidationStatus { Pending, Approved, Rejected, Disputed }
+
+    struct ValidationRequest {
+        uint256 agentId;
+        address requester;
+        bytes32 taskHash;       // 検証対象のタスク/出力のハッシュ
+        string resultURI;       // 作業結果のURI
+        ValidationMethod method;
+        ValidationStatus status;
+        address validator;
+        uint256 stake;          // バリデータがロックしたETH
+        uint256 timestamp;
+    }
+
+    /// @notice 検証をリクエスト
+    function requestValidation(
+        uint256 agentId,
+        bytes32 taskHash,
+        string calldata resultURI,
+        ValidationMethod method
+    ) external returns (uint256 requestId) {
+        // ... リクエストを保存
+    }
+
+    /// @notice バリデータが判定を提出（ETHステーク付き）
+    function submitValidation(
+        uint256 requestId,
+        ValidationStatus status
+    ) external payable {
+        req.validator = msg.sender;
+        req.status = status;
+        req.stake = msg.value; // ステークとしてロック
+    }
+
+    /// @notice 異議申し立て
+    function disputeValidation(uint256 requestId) external {
+        req.status = ValidationStatus.Disputed;
+    }
+}
+```
+
+このレジストリにより、「エージェントが本当に正しい仕事をしたか？」をオンチェーンで検証可能になります。例えば `StakedReExecution` では、バリデータがETHをステークして同じタスクを再実行し、結果が一致すればApproved、一致しなければステークが没収される仕組みです。
+
+#### 3つのレジストリの連携
+
+ERC-8004の3つのレジストリは独立したコントラクトですが、Identity Registryを共通の基盤として連携します。
+
+```
+Identity Registry (ERC-721)
+    │
+    ├── Reputation Registry ──→ agentIdに紐づく評価を蓄積
+    │
+    └── Validation Registry ──→ agentIdの作業結果を検証
+```
+
+買い手エージェントが売り手を選ぶ際の判断フローは以下のようになります。
+
+1. **Identity Registry** で売り手のAgent IDを確認し、MCPやA2Aのエンドポイントを取得
+2. **Reputation Registry** の `getSummary()` で、信頼できるレビュアーによる評価スコアを確認
+3. **Validation Registry** で過去の作業の検証結果を確認
+4. すべてが基準を満たせば取引を開始
+
+### 評判スコア: ReputationRegistry
+
+身分証があるだけでは十分ではありません。免許証を持っているだけで信頼できるわけではないのと同じです。
+
+`ReputationRegistry` は、Agent IDに紐づいた **成功タスク数** と **スコア** を記録します。エージェントがタスクを完了するたびにスコアが加算され、その実績がオンチェーンに永続的に残ります。
+
+```solidity
+// contracts/AgentRegistry.sol (抜粋)
+contract ReputationRegistry is Ownable {
+    struct Reputation {
+        uint256 successTasks;
+        uint256 score;
+    }
+    mapping(uint256 => Reputation) public reputations;
+
+    function recordSuccess(uint256 agentId, uint256 scoreIncrement)
+        external onlyOwner
+    {
+        Reputation storage rep = reputations[agentId];
+        rep.successTasks += 1;
+        rep.score += scoreIncrement;
+    }
+
+    function getReputation(uint256 agentId)
+        external view returns (uint256, uint256)
+    {
+        Reputation storage rep = reputations[agentId];
+        return (rep.successTasks, rep.score);
+    }
+}
+```
+
+### エージェントのツールから呼ぶ
+
+買い手エージェントがこれらのコントラクトにアクセスするツール関数は以下のようになります。
+
+```python
+# agent/tools/blockchain.py (抜粋)
+from web3 import Web3
+
+def check_agent_identity(address: str) -> dict:
+    """Check if an address owns an Agent ID NFT
+    on the IdentityRegistry.
+
+    Args:
+        address: The Ethereum address to check.
+
+    Returns:
+        dict: Identity status with agent_id if found.
+    """
+    w3 = _get_web3()
+    identity, _, _ = _get_contracts(w3)
+    balance = identity.functions.balanceOf(
+        Web3.to_checksum_address(address)
+    ).call()
+    if balance > 0:
+        return {
+            "status": "verified",
+            "address": address,
+            "has_agent_id": True,
+        }
+    return {
+        "status": "unverified",
+        "address": address,
+        "has_agent_id": False,
+    }
+
+def get_reputation(agent_id: int) -> dict:
+    """Get the on-chain reputation score for an Agent ID.
+
+    Args:
+        agent_id: The numeric Agent ID.
+
+    Returns:
+        dict: Reputation data including success_tasks and score.
+    """
+    w3 = _get_web3()
+    _, reputation, _ = _get_contracts(w3)
+    tasks, score = reputation.functions.getReputation(
+        agent_id
+    ).call()
+    return {
+        "status": "success",
+        "agent_id": agent_id,
+        "success_tasks": tasks,
+        "score": score,
+        "trustworthy": score >= 10,
+    }
+```
+
+エージェントがこれらのツールを呼ぶと、背後では web3.py 経由でSepoliaテストネット上のスマートコントラクトにクエリが飛びます。エージェントは戻り値の `trustworthy: true/false` を見て取引を続行するか判断します。
+
+**エージェントにとって、ブロックチェーンは「信頼できるデータベース」に過ぎません。** 違いは、そのデータベースが誰にも改ざんできないことです。
+
+---
+
+## 取引の意思表明: 署名付きインテント
+
+### TIS (Transaction Intent Schema) とは何か
+
+買い手エージェントが「A100 GPUを1時間、0.0001 ETHで買いたい」と決めたとします。この意思を**構造化されたデータ**として表現したものが TIS です。
+
+```typescript
+// scripts/types.ts
+interface TIS {
+  intentId: string;        // 一意な識別子
+  action: "TRANSFER";      // 何をしたいか
+  token: string;           // 支払い通貨（ETHのゼロアドレス）
+  amount: bigint;          // 金額（wei単位）
+  deadline: number;        // 有効期限（UNIXタイムスタンプ）
+}
+```
+
+TISは「エージェントの注文書」と考えるとわかりやすいです。何を、いくらで、いつまでに実行したいかが構造化されています。
+
+### EIP-712: なぜ「読める署名」が必要か
+
+TISに署名する方法は複数あります。最も単純なのは `keccak256` でハッシュして署名する方法ですが、これだと署名対象が人間には読めないバイナリになってしまいます。
+
+**EIP-712** は「型付き構造化データ」の署名標準です。署名対象のフィールド名と型が明示されるため、ウォレットが署名前に「何に署名しようとしているか」を人間に表示できます。
+
+```
+┌─────────────────────────────┐
+│  署名リクエスト               │
+│                             │
+│  intentId: "intent-001"     │
+│  action:   "TRANSFER"       │
+│  token:    0x0000...0000    │
+│  amount:   100000000000000  │
+│  deadline: 1743206400       │
+│                             │
+│  [署名する] [キャンセル]      │
+└─────────────────────────────┘
+```
+
+versus
+
+```
+┌─────────────────────────────┐
+│  署名リクエスト               │
+│                             │
+│  0x4e2a8c...（意味不明）      │
+│                             │
+│  [署名する] [キャンセル]      │
+└─────────────────────────────┘
+```
+
+エージェントの世界では、この「読める署名」が監査可能性（auditability）につながります。エージェントが何に署名したか、後から検証できることが重要です。
+
+### 署名の実装
+
+```typescript
+// scripts/signer.ts (抜粋)
+import { ethers, Wallet } from "ethers";
+import { EIP712Domain, TIS, TIS_TYPE } from "./types";
+
+export async function signTIS(
+  agentWallet: Wallet,
+  tis: TIS,
+  domain: EIP712Domain
+): Promise<string> {
+  return agentWallet.signTypedData(
+    domain,
+    TIS_TYPE,
+    {
+      intentId: tis.intentId,
+      action: tis.action,
+      token: tis.token,
+      amount: tis.amount,
+      deadline: tis.deadline,
+    }
+  );
+}
+
+export function verifyTIS(
+  tis: TIS, signature: string, domain: EIP712Domain
+): string {
+  return ethers.verifyTypedData(
+    domain, TIS_TYPE,
+    { ...tis },
+    signature
+  );
+}
+```
+
+`signTypedData` が EIP-712 の核心です。ドメイン情報（どのコントラクトの、どのチェーンの署名か）と型定義を渡すだけで、構造化署名が生成されます。検証側は `verifyTypedData` で署名者のアドレスを復元できます。
+
+### PDR (Policy Decision Record): ポリシーエンジンの承認
+
+本実装では省略していますが、TISとペアになる概念として **PDR** があります。PDRは「ポリシーエンジン」がTISを審査した結果を記録するもので、APPROVE（承認）またはREJECT（拒否）の判定とEIP-712署名を含みます。
+
+```typescript
+interface PDR {
+  tisHash: string;          // TISのハッシュ
+  decision: "APPROVE" | "REJECT";
+  signature: string;        // ポリシーエンジンのEIP-712署名
+}
+```
+
+TIS（エージェントの意思）+ PDR（ポリシーの承認）のペアにより、「誰が何を承認したか」が暗号学的に証明されます。これは参考論文（Alqithami, 2026）が提唱する信頼アーキテクチャの中核概念です。
+
+---
+
+## 実行: スマートアカウントが守る取引
+
+### AgentSmartAccount: エージェントの「法人カード」
+
+買い手エージェントが実際にETHを送金するとき、直接ウォレットから送るのではなく、**AgentSmartAccount** という中間層を経由します。
+
+なぜこの中間層が必要かというと、エージェントに「何でもできる権限」を渡すのは危険だからです。法人カードに利用上限があるのと同じ理由で、エージェントには**SpendLimit（支出上限）**を設定します。
+
+```solidity
+// contracts/AgentSmartAccount.sol (抜粋)
+struct Delegation {
+    uint256 spendLimit;   // オーナーが許可した上限額
+    uint256 spent;        // 使用済み額
+    bool active;          // 有効/無効フラグ
+}
+
+function grantDelegation(
+    address delegate, uint256 spendLimit
+) external onlyOwner {
+    delegations[delegate] = Delegation({
+        spendLimit: spendLimit,
+        spent: 0,
+        active: true
+    });
+}
+```
+
+オーナー（人間）が `grantDelegation` を呼んで「このエージェントは最大0.001 ETHまで使ってよい」と設定します。以降、エージェントはこの範囲内でのみ資金を動かせます。
+
+### 4層バリデーション
+
+エージェントが操作を実行するとき、スマートアカウントは4つの検証を行います。
+
+```solidity
+function executeOperation(UserOperation calldata op) external {
+    Delegation storage del = delegations[op.delegate];
+
+    // 1. 委譲が有効か
+    require(del.active, "Delegation not active");
+
+    // 2. 上限額以内か
+    require(
+        del.spent + op.value <= del.spendLimit,
+        "Exceeds spend limit"
+    );
+
+    // 3. ノンスが正しいか（リプレイ防止）
+    require(
+        op.nonce == nonces[op.delegate],
+        "Invalid nonce"
+    );
+
+    // 4. 署名がデリゲート本人のものか
+    bytes32 hash = _operationHash(op);
+    address signer = _recoverSigner(hash, op.signature);
+    require(signer == op.delegate, "Invalid signature");
+
+    // 状態を更新してから外部呼び出し（CEIパターン）
+    del.spent += op.value;
+    nonces[op.delegate] += 1;
+
+    (bool success, ) = op.to.call{value: op.value}(op.data);
+    require(success, "Execution failed");
+}
+```
+
+この4層がエージェントの安全網になります。
+
+| レイヤー | 何を防ぐか |
+|---------|-----------|
+| 1. active チェック | 取り消された権限の悪用 |
+| 2. spendLimit チェック | 予算超過 |
+| 3. nonce チェック | 同じ操作の二重実行（リプレイ攻撃） |
+| 4. 署名検証 | 他人による操作の偽造 |
+
+**重要なのは、これらの検証がコントラクトレベルで強制される点です。** プロンプトインジェクションでエージェントのLLMが騙されたとしても、スマートコントラクトの `require` 文は騙せません。上限を超える送金は、物理的に不可能です。
+
+### Python ツールからの実行フロー
+
+エージェントが `execute_payment` ツールを呼ぶと、以下の処理が走ります。
+
+```python
+# agent/tools/blockchain.py (抜粋 — 簡略化)
+def execute_payment(
+    buyer_address: str,
+    seller_address: str,
+    amount_eth: float,
+    intent_id: str,
+) -> dict:
+    """Execute payment through the AgentSmartAccount."""
+    w3 = _get_web3()
+    _, _, smart_account = _get_contracts(w3)
+
+    # 1. 残高チェック
+    remaining = smart_account.functions.remainingAllowance(
+        buyer_address
+    ).call()
+    amount_wei = Web3.to_wei(amount_eth, "ether")
+
+    if remaining < amount_wei:
+        return {
+            "status": "rejected",
+            "reason": "Exceeds spend limit",
+        }
+
+    # 2. ノンス取得
+    nonce = smart_account.functions.nonces(
+        buyer_address
+    ).call()
+
+    # 3. コントラクトと同じハッシュを構築
+    inner_hash = Web3.solidity_keccak(...)
+    op_hash = Web3.solidity_keccak(
+        ["bytes"], [b"\x19\x01" + inner_hash]
+    )
+
+    # 4. デリゲートの秘密鍵で署名
+    signed = delegate_account.signHash(op_hash)
+
+    # 5. UserOperationを構築して送信
+    op = {
+        "delegate": buyer_address,
+        "to": seller_address,
+        "value": amount_wei,
+        "data": b"",
+        "nonce": nonce,
+        "signature": signed.signature,
+    }
+    tx = smart_account.functions.executeOperation(op)\
+        .build_transaction({...})
+    tx_hash = w3.eth.send_raw_transaction(
+        delegate_account.sign_transaction(tx).raw_transaction
+    )
+
+    return {
+        "status": "success",
+        "tx_hash": tx_hash.hex(),
+        "etherscan_url": f"https://sepolia.etherscan.io/tx/...",
+    }
+```
+
+エージェントの視点からは「`execute_payment` を呼んだら結果が返ってきた」というだけです。背後で行われる署名構築、ノンス管理、ガス代計算はツール関数が吸収します。
+
+### Sepoliaでの実行結果
+
+本章のコードは実際にSepoliaテストネットにデプロイ済みです。
+
+| コントラクト | アドレス |
+|---|---|
+| IdentityRegistry | `0xfC543a9eDE201C26444Aa2d07B619f3ED2d38f0f` |
+| ReputationRegistry | `0x7d9e05c105fF844b983E8E46bfbA5897eD10C4e1` |
+| AgentSmartAccount | `0xE6106b4c0899c0fE015f5d780fF5dd97F7ffE529` |
+
+Etherscanで各コントラクトのトランザクション履歴を確認すると、エージェントの登録、権限委譲、支払い実行のイベントが時系列で記録されていることが分かります。
+
+---
+
+## デモ: 2体のエージェントを動かす
+
+### マーケットプレイス・オーケストレーター
+
+2体のエージェントを連携させるのが `marketplace.py` です。ADKの `sub_agents` 機能を使い、コーディネーターが買い手と売り手に仕事を委譲します。
+
+```python
+# agent/marketplace.py
+from google.adk.agents import Agent
+from google.adk.runners import InMemoryRunner
+from google.genai import types
+
+from buyer_agent import buyer_agent
+from seller_agent import seller_agent
+
+coordinator = Agent(
+    name="coordinator",
+    model="gemini-2.5-flash",
+    description="Coordinates a GPU compute trade "
+                "between buyer and seller agents.",
+    instruction="""\
+You are the marketplace coordinator.
+Manage a trade between a buyer and seller agent.
+
+Workflow:
+1. Delegate to buyer_agent: Ask it to find and purchase
+   "NVIDIA A100 GPU - 1 hour".
+2. Once the buyer reports a successful payment with a tx_hash,
+   delegate to seller_agent: Ask it to verify the buyer's
+   identity and confirm the payment transaction.
+3. Summarize the trade outcome.
+""",
+    sub_agents=[buyer_agent, seller_agent],
+)
+```
+
+`sub_agents` に登録されたエージェントは、コーディネーターのLLMが各エージェントの `description` を読んで、適切な相手に自動的にタスクを委譲します。
+
+### 実行方法
+
+```bash
+cd agent
+python marketplace.py
+```
+
+### 実行ログ（期待される出力）
+
+以下は、マーケットプレイスを実行した際の典型的な出力です。
+
+```
+============================================================
+  GPU Compute Marketplace — Multi-Agent Demo
+============================================================
+
+[User Request]
+I need to buy 1 hour of NVIDIA A100 GPU compute.
+Find a seller, verify their identity and reputation,
+then execute the purchase within my budget.
+After payment, have the seller verify the transaction.
+------------------------------------------------------------
+
+[coordinator]: I'll help you purchase GPU compute. Let me
+delegate this to the buyer agent first.
+
+[buyer_agent]: Let me check the marketplace inventory.
+
+[buyer_agent] → tool: list_marketplace_inventory({})
+[buyer_agent] ← result: {
+  "items": [
+    {"id": "gpu-a100-1h", "name": "NVIDIA A100 GPU - 1 hour",
+     "price_eth": 0.0001, "seller_agent_id": 1}
+  ]
+}
+
+[buyer_agent]: Found A100 GPU for 0.0001 ETH.
+Let me verify the seller's identity.
+
+[buyer_agent] → tool: check_agent_identity({
+  "address": "0x..."
+})
+[buyer_agent] ← result: {
+  "status": "verified", "has_agent_id": true
+}
+
+[buyer_agent]: Seller is verified. Checking reputation...
+
+[buyer_agent] → tool: get_reputation({"agent_id": 1})
+[buyer_agent] ← result: {
+  "success_tasks": 5, "score": 50, "trustworthy": true
+}
+
+[buyer_agent]: Seller has 50 points across 5 tasks.
+Trustworthy. Checking my budget...
+
+[buyer_agent] → tool: get_remaining_allowance({
+  "delegate_address": "0x..."
+})
+[buyer_agent] ← result: {
+  "remaining_eth": 0.001
+}
+
+[buyer_agent]: Budget sufficient. Creating purchase intent...
+
+[buyer_agent] → tool: create_purchase_intent({
+  "buyer_address": "0x...",
+  "seller_address": "0x...",
+  "item_id": "gpu-a100-1h",
+  "amount_eth": 0.0001
+})
+
+[buyer_agent]: Intent created. Executing payment...
+
+[buyer_agent] → tool: execute_payment({
+  "amount_eth": 0.0001, "intent_id": "a1b2c3..."
+})
+[buyer_agent] ← result: {
+  "status": "success",
+  "tx_hash": "0xabc123...",
+  "remaining_allowance_eth": 0.0009
+}
+
+[buyer_agent]: Payment successful!
+Tx: 0xabc123... Remaining budget: 0.0009 ETH.
+
+[coordinator]: Payment confirmed. Let me ask the seller
+to verify.
+
+[seller_agent]: Let me verify the buyer and the payment.
+
+[seller_agent] → tool: check_agent_identity({
+  "address": "0x..."
+})
+[seller_agent] ← result: {"status": "verified"}
+
+[seller_agent] → tool: check_transaction({
+  "tx_hash": "0xabc123..."
+})
+[seller_agent] ← result: {
+  "confirmed": true,
+  "value_eth": 0.0001,
+  "block_number": 7654321
+}
+
+[seller_agent]: Buyer verified. Payment of 0.0001 ETH
+confirmed on-chain at block 7654321.
+Delivering GPU compute access now.
+
+[coordinator]: Trade complete!
+- Buyer purchased NVIDIA A100 GPU (1 hour) for 0.0001 ETH
+- Payment verified on Sepolia (block 7654321)
+- Seller delivering compute resources
+
+============================================================
+  Trade Complete
+============================================================
+```
+
+### 何が起きたか
+
+このログを振り返ると、以下のフローが自律的に実行されています。
+
+```
+┌─────────────┐    ┌──────────────────┐    ┌─────────────┐
+│ Coordinator │───→│  Buyer Agent     │    │ Seller Agent│
+│  (Gemini)   │    │   (Gemini)       │    │  (Gemini)   │
+└─────────────┘    └──────────────────┘    └─────────────┘
+                          │                       │
+                    ┌─────┴─────┐           ┌─────┴─────┐
+                    │ On-Chain  │           │ On-Chain  │
+                    │  Tools    │           │  Tools    │
+                    └─────┬─────┘           └─────┬─────┘
+                          │                       │
+                    ┌─────┴───────────────────────┴─────┐
+                    │     Ethereum (Sepolia Testnet)     │
+                    │  ┌─────────────┐ ┌──────────────┐ │
+                    │  │IdentityReg. │ │SmartAccount  │ │
+                    │  │ (ERC-721)   │ │ (EIP-4337)   │ │
+                    │  └─────────────┘ └──────────────┘ │
+                    │  ┌─────────────┐                  │
+                    │  │ReputationReg│                  │
+                    │  └─────────────┘                  │
+                    └───────────────────────────────────┘
+```
+
+1. コーディネーターが買い手に委譲
+2. 買い手がマーケットプレイスを検索
+3. 買い手が売り手の**身元をオンチェーンで確認**（ERC-721）
+4. 買い手が売り手の**評判をオンチェーンで確認**
+5. 買い手が購入意図を構造化（TIS概念）
+6. 買い手が**スマートアカウント経由で支払い**（EIP-4337 + 署名検証）
+7. コーディネーターが売り手に委譲
+8. 売り手が買い手の身元を確認
+9. 売り手が**支払いをオンチェーンで確認**
+10. 売り手が納品を承認
+
+**人間は一度も介入していません。** すべてのステップがエージェントの自律的な判断で実行され、信頼の担保はブロックチェーンが行いました。
+
+---
+
+## 上限を超えたらどうなる？
+
+### ネガティブテスト: 予算超過
+
+エージェントが上限を超える購入を試みた場合の挙動を確認します。
+
+まず、Python側の `execute_payment` ツールが事前チェックを行います。
+
+```python
+remaining = smart_account.functions.remainingAllowance(
+    buyer_address
+).call()
+if remaining < amount_wei:
+    return {
+        "status": "rejected",
+        "reason": "Exceeds spend limit. "
+                  f"Remaining: {remaining_eth} ETH, "
+                  f"Requested: {amount_eth} ETH",
+    }
+```
+
+仮にこの事前チェックを迂回しても、スマートコントラクトの `require` が最終防衛線になります。
+
+```solidity
+require(
+    del.spent + op.value <= del.spendLimit,
+    "Exceeds spend limit"
+);
+```
+
+この `require` はコントラクトのバイトコードに埋め込まれており、**いかなる方法でもバイパスできません**。プロンプトインジェクションでエージェントのLLMが騙されても、ブロックチェーンレベルのガードレールは健在です。
+
+### エージェントのリカバリ
+
+ツールが `{"status": "rejected", "reason": "..."}` を返すと、Geminiはこの結果を解釈して次のアクションを判断します。
+
+```
+[buyer_agent]: Payment was rejected — exceeds my spend limit.
+Remaining budget is 0.0009 ETH but the item costs 0.001 ETH.
+I cannot complete this purchase. Informing the coordinator.
+```
+
+エージェントは失敗を「理解」し、適切に報告します。これは事前にプログラムされたエラーハンドリングではなく、LLMが状況を推論した結果です。
+
+### 三層防衛の構造
+
+| Layer | 防衛線 | チェック内容 | 堅牢性 |
+|:---:|---|---|---|
+| 1 | **LLMの判断** | 「予算が足りないから買わない」 | 柔軟だが脆弱（プロンプトインジェクション等） |
+| 2 | **ツールの事前チェック** | `remaining < amount → reject` | 堅牢だが限定的 |
+| 3 | **スマートコントラクト** | `require(spent + value <= spendLimit)` | 最も堅牢・バイパス不可能 |
+
+Layer 1 が突破されても Layer 2 が止め、Layer 2 が迂回されても Layer 3 が止めます。上のレイヤーほど柔軟で、下のレイヤーほど堅牢です。最終防衛線であるスマートコントラクトの `require` 文はバイトコードに埋め込まれており、プロンプトインジェクションでLLMが騙されても物理的にバイパスできません。
+
+---
+
+## EIP-712署名のテスト
+
+本章のコードにはEIP-712署名の動作確認スクリプトが含まれています。
+
+```bash
+npx hardhat run scripts/test-signatures.ts
+```
+
+```
+Agent  address: 0x2EC3...BADd
+Policy address: 0x516a...5284
+
+--- TIS Signing ---
+TIS Signature: 0x4e46...
+Recovered signer: 0x2EC3...BADd
+Match: ✓
+
+--- PDR Signing ---
+TIS Hash: 0x0b90...2595
+PDR Decision: APPROVE
+PDR Signature: 0xaaf2...
+Recovered signer: 0x516a...5284
+Match: ✓
+
+--- Rejection Test ---
+PDR Decision: REJECT
+Match: ✓
+
+✓ All signature tests passed.
+```
+
+ダミーウォレットでTISとPDRの署名・検証が正しく行えることを確認しています。署名者のアドレスが正確に復元できること（`Match: ✓`）が、EIP-712の核心です。
+
+---
+
+## まとめ
+
+### 作ったもの
+
+本章では、以下のシステムを実装しました。
+
+| コンポーネント | 技術 | 役割 |
+|---|---|---|
+| 買い手エージェント | ADK + Gemini | 自律的に購入判断と実行 |
+| 売り手エージェント | ADK + Gemini | 身元・支払い検証と納品 |
+| マーケットプレイス | ADK sub_agents | 2体のエージェントの連携 |
+| Agent ID | ERC-721 (Solidity) | エージェントの身分証 |
+| 評判スコア | Solidity | 信頼度の定量化 |
+| 署名付きインテント | EIP-712 (TypeScript) | 監査可能な意思表明 |
+| スマートアカウント | EIP-4337風 (Solidity) | 上限付き権限委譲 |
+
+Geminiが「次に何をすべきか」を推論し、ブロックチェーンが「それは許可されているか」を検証します。この組み合わせにより、人間不在でも安全な取引が実現します。
+
+### 参考論文との対応
+
+Alqithami (2026) の論文 *"Autonomous Agents on Blockchains: Standards, Execution Models, and Trust Boundaries"* は、AIエージェントとブロックチェーンの統合に4つのレイヤーを提唱しています。
+
+| 論文のレイヤー | 本章での実装 |
+|---|---|
+| Agent Definition | ADKのAgent定義（instruction + tools） |
+| Execution Layer | ブロックチェーンツール + SmartAccount |
+| Verification Layer | 4層バリデーション + EIP-712署名 |
+| Trust Boundary Management | SpendLimit + ReputationRegistry |
+
+### 次のステップ
+
+本実装はProof of Conceptです。プロダクション利用には以下の拡張が考えられます。
+
+**エージェント側**:
+- 複数のマーケットプレイスを横断する検索
+- A2Aプロトコル（v0.3）によるエージェント間の直接メッセージング
+- ADK 2.0のグラフベースワークフローへの移行
+- Gemini 3.x系への移行（2.5-flashは2026年6月非推奨予定）
+- 長期記憶（過去の取引履歴からの学習）
+
+**ブロックチェーン側**:
+- ERC-8004メインネットコントラクトへの移行（Identity / Reputation / Validation Registry）
+- EIP-7702によるEOAのスマートアカウント化
+- EIP-8141（ネイティブアカウント抽象化）への対応準備
+- SpendLimitに期間制限（24時間あたりの上限等）を追加
+
+**統合**:
+- PDRをフルに実装し、ポリシーエンジンによる自動承認フローを構築
+- L402 / x402によるマイクロペイメント決済の統合
+- オンチェーン/オフチェーンのハイブリッド検証
+- Google Cloud Agent Engineでのプロダクションデプロイ
+
+---
+
+## 補足: HTTP 402ベースのエージェント決済 — L402とx402
+
+本章ではEthereumを信頼の基盤として使いましたが、エージェント間決済のアプローチはEthereumだけではありません。HTTPステータスコード402 (Payment Required) を活用した **L402** と **x402** も注目に値します。
+
+### L402とは何か
+
+L402は、長らく未使用だったHTTPステータスコード **402 (Payment Required)** をBitcoin Lightning Networkで実現するプロトコルです。Lightning Labsが開発し、2020年に「LSAT」として公開された後、L402に改名されました。2026年2月には **lightning-agent-tools**（AIエージェント向けの7つのコンポーザブルスキル）と **lnget**（L402対応CLIクライアント）がリリースされ、エージェント決済のツールキットが充実しています。
+
+仕組みはシンプルです。
+
+1. エージェントがAPIにリクエストを送信
+2. サーバーがHTTP 402を返し、**Lightningインボイス**と**トークン**を提示
+3. エージェントがLightning決済を実行（1秒未満、手数料はほぼゼロ）
+4. 決済の暗号学的証明（preimage）をトークンと共に再送信 → アクセス許可
+
+なお、プロトコル仕様は更新されており、`WWW-Authenticate` ヘッダーのトークン形式が `macaroon=` から `token=` に変更され、Macaroon以外のトークン形式にも対応可能になっています（Macaroonは引き続き推奨デフォルト）。
+
+### なぜエージェントに適しているか
+
+従来の決済手段（クレジットカード、APIキー、請求アカウント）は、人間がチェックアウトボタンを押すことを前提に設計されています。L402はこの前提を覆します。
+
+- **事前の契約関係が不要**: Lightningにアクセスできるクライアントなら即座に決済・認証が可能
+- **マイクロペイメント対応**: API呼び出し1回あたり数円以下の課金が経済的に成立
+- **トークンの委譲が可能**: Macaroonトークンはスコープを制限した上で子エージェントに渡せます。本章のSpendLimitに似た「権限の制限付き委譲」がプロトコルレベルで実現されています
+
+### x402: Coinbaseによるステーブルコインベースの対抗規格
+
+L402と同じHTTP 402を使いつつ、決済レイヤーをEVMチェーン上のUSDCに置き換えたのが **x402** です。2026年4月2日にCoinbaseとLinux Foundationが **x402 Foundation** を設立し、Stripe、Cloudflare、Shopify、Solanaが創設メンバーとして参加。AWS、Google、Microsoft、Visa、Mastercardも支持を表明しています。
+
+| 観点 | L402 (Lightning Labs) | x402 (Coinbase) |
+|---|---|---|
+| 決済通貨 | BTC（Satoshi建て、変動あり） | USDC（ドル建て、安定） |
+| 決済レイヤー | Bitcoin Lightning Network | Base, Ethereum, Solana等 |
+| 検証方式 | ステートレス（暗号学的証明のみ） | オンチェーン確認（facilitator経由） |
+| 信頼モデル | 分散型（Bitcoin合意） | Circle (USDC発行体) + Coinbase |
+| 速度 | ミリ秒 | 1-3秒（Base） |
+
+両者は競合ではなく、Bitcoin/Lightningエコシステムとの接続にはL402、EVM/ステーブルコインとの接続にはx402という棲み分けが形成されつつあります。サーバー側が両方のチャレンジを発行し、エージェントが持つウォレットに応じてどちらかで決済する、というハイブリッド構成も可能です。
+
+### EthereumアプローチとHTTP 402アプローチの比較
+
+| 観点 | Ethereum (本章) | L402 / x402 |
+|---|---|---|
+| 信頼モデル | スマートコントラクトによる検証 | 暗号学的な決済証明 / オンチェーン確認 |
+| 決済速度 | ブロック確認（数十秒〜数分） | ミリ秒〜数秒 |
+| 適するユースケース | 権限管理・評判・複雑なロジック | マイクロペイメント・API課金 |
+| エージェントID | ERC-721 NFT (ERC-8004) | トークン / ウォレットアドレス |
+
+これらは補完的です。Ethereumの強みはスマートコントラクトによる複雑なルール記述と身元管理（ERC-8004）であり、L402/x402の強みは高速・低コストな少額決済です。エージェントの身元管理とレピュテーションはEthereumで、API呼び出しごとのマイクロペイメントはL402/x402で、という使い分けが現実的な構成になりつつあります。ERC-8004のv2仕様でx402との統合が検討されているのも、この方向性を裏づけています。
+
+---
+
+## 環境構築ガイド
+
+### 1. リポジトリのクローンと依存関係
+
+```bash
+git clone https://github.com/shu-kob/agentic-aa-sandbox.git
+cd agentic-aa-sandbox
+
+# ブロックチェーン側
+npm install
+
+# エージェント側
+cd agent
+pip install -r requirements.txt
+```
+
+### 2. 環境変数の設定
+
+```bash
+# .env
+ALCHEMY_API_KEY=your_alchemy_api_key
+MNEMONIC=your twelve word mnemonic phrase here
+GOOGLE_API_KEY=your_google_ai_api_key
+```
+
+- Alchemy API Key: https://alchemy.com でプロジェクト作成（Sepolia）
+- Mnemonic: テスト用ウォレットのニーモニック
+- Google API Key: https://aistudio.google.com/apikey で取得
+
+### 3. コントラクトのコンパイルとデプロイ
+
+```bash
+npx hardhat compile
+npx hardhat run scripts/deploy.ts --network sepolia
+```
+
+### 4. エージェントの実行
+
+```bash
+cd agent
+python marketplace.py
+```
+
+### 5. 署名テスト
+
+```bash
+npx hardhat run scripts/test-signatures.ts
+```
+
+---
+
+コード全体は [GitHub リポジトリ](https://github.com/shu-kob/agentic-aa-sandbox) を参照してください。
+
+**参考文献**:
+- Alqithami, S. (2026). *Autonomous Agents on Blockchains: Standards, Execution Models, and Trust Boundaries.* arXiv:2601.04583.
+- Buterin, V. (2014). *DAOs, DACs, DAs and More: An Incomplete Terminology Guide.* Ethereum Blog.
+- ERC-8004: Trustless Agents. Ethereum Improvement Proposals. (Draft, 2025. メインネットデプロイ: 2026年1月)
+- Lightning Labs. (2026). *The Future Is Now: Why L402 Is the Internet-Native Payments Protocol for Agents.*
+- Coinbase / Linux Foundation. (2026). *x402: The Internet-Native Payment Protocol.* x402.org
