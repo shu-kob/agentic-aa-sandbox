@@ -283,15 +283,19 @@ NFTを身分証に使う利点は2つあります。
 
 ### ERC-8004: Trustless Agents — エージェント専用の標準規格
 
-本章の実装はシンプルなERC-721ベースのIdentityRegistryを使っていますが、より本格的な標準として **ERC-8004 (Trustless Agents)** が提案されています（2025年8月、Draft段階）。
+本章の実装はシンプルなERC-721ベースのIdentityRegistryを使っていますが、より本格的な標準として **ERC-8004 (Trustless Agents)** が策定されています。
 
-ERC-8004はMetaMask、Ethereum Foundation、Google、Coinbaseのエンジニアが共同で策定しており、以下の3つのレジストリをチェーンごとに1つずつ配置する設計です。
+ERC-8004は2025年8月にMetaMaskのMarco De Rossi、Ethereum FoundationのDavide Crapis（dAIチームAIリード）、GoogleのJordan Ellis、CoinbaseのErik Reppelらが共同で提案しました。EIPステータスは2026年4月時点でもDraftですが、コアコントラクト（Identity RegistryとReputation Registry）は監査済みで、2026年1月29日にEthereumメインネットにデプロイされています。2026年3月17日には公式ローンチイベント「8004 Launch Day」が開催され、Base・Optimism・ArbitrumなどのL2への展開も進行中です。
+
+ENS、EigenLayer、The Graph、Taikoなどのチームを含む100名以上のコントリビュータが参加しており、v2仕様ではMCPサポートの強化やx402との統合が検討されています。
+
+ERC-8004は以下の3つのレジストリをチェーンごとに1つずつ配置する設計です。
 
 1. **Identity Registry** — ERC-721ベースのエージェントID。サービスエンドポイント（MCP、A2A、ENS、DID等）やウォレットアドレスをメタデータとして紐づけます
 2. **Reputation Registry** — 任意のアドレスがエージェントに対してフィードバック（評価スコア、タグ、詳細URI）を投稿できます。Sybil攻撃への対策として、`getSummary()` は信頼するクライアントアドレスを指定してフィルタリングする設計です
 3. **Validation Registry** — エージェントの作業結果を独立した検証者が検証します。検証方式はプラガブルで、ステーク担保の再実行、zkMLプルーフ、TEEアテステーションなどに対応します
 
-本章のIdentityRegistryとReputationRegistryは、ERC-8004の概念を簡略化した実装と位置づけられます。ERC-8004が正式に採択されれば、これらのコントラクトを標準インターフェースに置き換えることで、異なるマーケットプレイス間でのエージェントの相互運用が可能になります。
+本章のIdentityRegistryとReputationRegistryは、ERC-8004の概念を簡略化した実装と位置づけられます。メインネット上の標準コントラクトに置き換えることで、異なるマーケットプレイス間でのエージェントの相互運用が可能になります。
 
 以下では、ERC-8004の3つのレジストリを実装したコードを紹介します。
 
